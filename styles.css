@@ -29,5 +29,3 @@
 .timerBtn.danger{border-color:rgba(208,74,74,.6);background:rgba(208,74,74,.12)}
 .timerDisplay{font-variant-numeric: tabular-nums; font-weight:900;}
 .xbtn{border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.15);color:var(--text);border-radius:12px;padding:8px 10px;font-size:16px;line-height:1}
-
-#buildTag{margin-left:auto}

@@ -4,13 +4,9 @@ const STORE_KEY="gym_v11d_timer_nosave_state";
 const INC_KG=2.5;
 const PIN_INC=1;
 
-const DAY_ORDER=['strength','fatloss','volume'];
+const BUILD_ID='v11d-intensity-title-1';
 
-const INTENSITY_MAP = {
-  strength: { pill: "Strength Day (80–90%)", title: "Strength Day • 80–90%" },
-  volume:   { pill: "Volume Day (60–70%)",   title: "Volume Day • 60–70%" },
-  fatloss:  { pill: "Fat Loss Day (40–50% • Short Rest)", title: "Fat Loss Day • 40–50% • Short Rest" }
-};
+const DAY_ORDER=['strength','fatloss','volume'];
 function uid(p="id"){return `${p}_${Math.random().toString(16).slice(2)}_${Date.now()}`;}
 function localISO(d=new Date()){const off=d.getTimezoneOffset();return new Date(d.getTime()-off*60000).toISOString().slice(0,10);}
 function addDays(iso,n){
@@ -64,7 +60,6 @@ const historyCard=document.getElementById('historyCard');
 const dayTitle=document.getElementById('dayTitle');
 const dayPill=document.getElementById('dayPill');
 const dayHint=document.getElementById('dayHint');
-const daySelect=document.getElementById('daySelect');
 const tbody=document.getElementById('tbody');
 const note=document.getElementById('note');
 const draftStatus=document.getElementById('draftStatus');
@@ -123,15 +118,6 @@ function getPlannedTemplate(dayType){
   return (state.templates?.[dayType]||[]).map(r=>({...r}));
 }
 
-
-function rebuildDraftFromDay(dayType){
-  // Only affects current date's draft (does not change history until you SAVE)
-  const tpl=getPlannedTemplate(dayType).map(r=>({...r, id:uid('row'), weight:(r.weight||''), pin:(r.pin||''), rir:'', keep:(r.keep!==false), rest:(r.rest||'60')}));
-  currentDayType=dayType;
-  draft={dayType:dayType, rows:tpl};
-  dirty=false;
-}
-
 function ensureDraftFor(dateISO){
   // If there is an existing saved session for this date, draft from it.
   const saved=state.sessions?.[dateISO];
@@ -144,20 +130,19 @@ function ensureDraftFor(dateISO){
   // Otherwise, decide day type based on lastCompleted (rotation by last saved)
   const last=lastCompleted();
   const dt = last ? nextDayType(last.dayType) : 'strength';
-  rebuildDraftFromDay(dt);
+  currentDayType=dt;
+  // Draft from template (exercises populated, but weights/pins empty unless template has them)
+  const tpl=getPlannedTemplate(dt).map(r=>({...r, id:uid('row'), weight:(r.weight||''), pin:(r.pin||''), rir:'', keep:(r.keep!==false), rest:(r.rest||'60')}));
+  draft={dayType:dt, rows:tpl};
+  dirty=false;
 }
 
 function setTopUI(){
-  dayTitle.textContent=fmtDay(currentDayType);
-  dayPill.textContent=currentDayType==='strength'?'Strength':currentDayType==='fatloss'?'Fat Loss':'Volume';
+  dayTitle.textContent = (INTENSITY_MAP[currentDayType]?.title) || fmtDay(currentDayType);
+  dayPill.textContent = (INTENSITY_MAP[currentDayType]?.pill) || (currentDayType==='strength'?'Strength':currentDayType==='fatloss'?'Fat Loss':'Volume');
   dayHint.textContent="Auto-rotates after you SAVE. Draft changes won't count until saved.";
-  if(daySelect){
-    daySelect.value = currentDayType || "strength";
-    const saved = state.sessions?.[currentDate];
-    daySelect.disabled = !!(saved && saved.rows && saved.rows.length);
-  }
   draftStatus.textContent = dirty ? "Draft (unsaved changes)" : "Draft (not saved)";
-  note.textContent = "RIR uses 0/1/2: 2 = progress, 1 = hold, 0 = reduce. Save commits + progresses + rotates.";
+  note.textContent = "RIR uses 0/1/2: 2 = progress, 1 = hold, 0 = reduce. Save commits + progresses + rotates. ("+BUILD_ID+")";
 }
 
 function render(){
@@ -246,13 +231,50 @@ function renderRow(r){
   chk.onchange=()=>{r.keep=chk.checked; markDirty();};
   tdKeep.appendChild(chk);
 
+  // Timer cell (only for time exercises)
+  const tdTimer=document.createElement('td');
+  const exNow=exById(r.exId);
+  if(exNow?.type==='time' && (exNow?.name!=="Farmer's Walk")){
+    const wrap=document.createElement('div'); wrap.style.display='grid'; wrap.style.gap='6px';
+
+    // Rest input
+    const rest=document.createElement('input'); rest.className='input'; rest.inputMode='numeric';
+    rest.placeholder='Rest s';
+    rest.value=(r.rest??'60').toString();
+    rest.oninput=()=>{r.rest=rest.value; markDirty();};
+    wrap.appendChild(rest);
+
+    // Start/Stop + display
+    const row2=document.createElement('div'); row2.style.display='flex'; row2.style.gap='6px'; row2.style.alignItems='center';
+    const btn=document.createElement('button'); btn.type='button'; btn.className='timerBtn';
+    const disp=document.createElement('div'); disp.className='timerDisplay'; disp.style.minWidth='64px'; disp.textContent='';
+
+    const isActive = activeTimer && activeTimer.rowId===r.id;
+    btn.textContent = isActive ? (activeTimer.phase==='walk'?'Walking…':'Rest…') : 'Start';
+    if(isActive) btn.classList.add('danger'); else btn.classList.remove('danger');
+
+    btn.onclick=()=>{ if(activeTimer && activeTimer.rowId===r.id){ stopTimer(); renderWorkout(); } else { startTimerForRow(r); renderWorkout(); } };
+    row2.appendChild(btn);
+    row2.appendChild(disp);
+    wrap.appendChild(row2);
+
+    // live updates
+    if(isActive){
+      disp.textContent = formatMMSS(activeTimer.remaining);
+    }
+
+    tdTimer.appendChild(wrap);
+  } else {
+    tdTimer.textContent='—';
+  }
+
   // Remove row (draft only)
   const tdRemove=document.createElement('td');
   const rm=document.createElement('button'); rm.className='xbtn'; rm.type='button'; rm.textContent='✕'; rm.title='Remove from this day (draft)';
   rm.onclick=()=>{ draft.rows = (draft.rows||[]).filter(x=>x.id!==r.id); markDirty(); renderWorkout(); };
   tdRemove.appendChild(rm);
 
-  tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4); tr.appendChild(td5); tr.appendChild(td6); tr.appendChild(tdKeep); tr.appendChild(tdRemove);
+  tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4); tr.appendChild(td5); tr.appendChild(td6); tr.appendChild(tdKeep); tr.appendChild(tdTimer); tr.appendChild(tdRemove);
   return tr;
 }
 
@@ -514,22 +536,6 @@ nextDay.onclick=()=>openDate(addDays(currentDate,1));
 todayBtn.onclick=()=>openDate(localISO());
 dateInput.onchange=()=>openDate(dateInput.value||localISO());
 
-// Day picker (manual override for today's training day)
-if(daySelect){
-  daySelect.onchange=()=>{
-    const saved=state.sessions?.[currentDate];
-    if(saved && saved.rows && saved.rows.length){
-      // can't change a saved day
-      daySelect.value = saved.dayType || currentDayType || 'strength';
-      return;
-    }
-    stopTimer();
-    rebuildDraftFromDay(daySelect.value);
-    render();
-  };
-}
-
-
 // Workout buttons
 addRowBtn.onclick=addRow;
 saveBtn.onclick=saveWorkout;
@@ -637,6 +643,8 @@ importFile.onchange=async()=>{
 };
 
 // Service worker
+if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js').catch(()=>{}));}
+
 // Init
 ensureDraftFor(currentDate);
 render();
